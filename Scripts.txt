@@ -1,0 +1,328 @@
+1.	Script de eliminación de DW, creación de filegroups, configuración de modelo de recuperación, creación de particiones. 
+
+-- Eliminar DW anterior si existe
+USE master;
+IF EXISTS (SELECT * FROM sys.databases WHERE name = 'DW_Northwind')
+BEGIN
+    ALTER DATABASE DW_Northwind SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+    DROP DATABASE DW_Northwind;
+END
+GO
+
+-- Crear nueva base de datos DW_Northwind
+CREATE DATABASE DW_Northwind
+ON 
+PRIMARY (
+    NAME = 'DW_Northwind_data',
+    FILENAME = 'D:\DW_Northwind\SCRIPTS\DW_Northwind_data.mdf',
+    SIZE = 50MB,
+    FILEGROWTH = 10MB
+),
+FILEGROUP DIMENSIONS (
+    NAME = 'DW_Northwind_dimensions',
+    FILENAME = 'D:\DW_Northwind\DIMENSIONS\DW_Northwind_dimensions.ndf',
+    SIZE = 50MB,
+    FILEGROWTH = 10MB
+),
+FILEGROUP FACTS (
+    NAME = 'DW_Northwind_facts',
+    FILENAME = 'D:\DW_Northwind\FACTS\DW_Northwind_facts.ndf',
+    SIZE = 50MB,
+    FILEGROWTH = 10MB
+),
+FILEGROUP STAGING (
+    NAME = 'DW_Northwind_staging',
+    FILENAME = 'D:\DW_Northwind\STAGING\DW_Northwind_staging.ndf',
+    SIZE = 50MB,
+    FILEGROWTH = 10MB
+)
+LOG ON (
+    NAME = 'DW_Northwind_log',
+    FILENAME = 'D:\DW_Northwind\SCRIPTS\DW_Northwind_log.ldf',
+    SIZE = 20MB,
+    FILEGROWTH = 10MB
+);
+GO
+
+-- Establecer modelo de recuperación SIMPLE
+ALTER DATABASE DW_Northwind SET RECOVERY SIMPLE;
+GO
+
+
+
+2.	Script de creación de tablas de prototipo del DW (dimensiones y hecho). 
+
+USE DW_Northwind;
+GO
+
+-- Crear esquemas si no existen
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'DIMENSIONS')
+    EXEC('CREATE SCHEMA DIMENSIONS');
+    
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'FACTS')
+    EXEC('CREATE SCHEMA FACTS');
+
+-- Crear la Tabla DimCustomer
+CREATE TABLE DIMENSIONS.DimCustomer (
+    CustomerKey INT IDENTITY(1,1) PRIMARY KEY,
+    CustomerID NVARCHAR(5), -- ID original de Northwind
+    CompanyName NVARCHAR(40),
+    ContactName NVARCHAR(30),
+    Country NVARCHAR(15)
+);
+GO
+
+-- Crear la Tabla DimProduct
+CREATE TABLE DIMENSIONS.DimProduct (
+    ProductKey INT IDENTITY(1,1) PRIMARY KEY,
+    ProductID INT, -- ID original de Northwind
+    ProductName NVARCHAR(40),
+    Category NVARCHAR(15),
+    UnitPrice MONEY
+);
+GO
+
+-- Crear la Tabla DimEmployee
+CREATE TABLE DIMENSIONS.DimEmployee (
+    EmployeeKey INT IDENTITY(1,1) PRIMARY KEY,
+    EmployeeID INT, -- ID original de Northwind
+    LastName NVARCHAR(20),
+    FirstName NVARCHAR(10),
+    Title NVARCHAR(30),
+    Country NVARCHAR(15)
+);
+GO
+
+-- Crear la Tabla de hechos: ventas
+CREATE TABLE FACTS.FactSales (
+    SalesKey INT IDENTITY(1,1) PRIMARY KEY,
+    OrderID INT,
+    ProductKey INT,
+    CustomerKey INT,
+    EmployeeKey INT,
+    OrderDate DATE,
+    Quantity INT,
+    UnitPrice MONEY,
+    Total MONEY,
+    FOREIGN KEY (ProductKey) REFERENCES DIMENSIONS.DimProduct(ProductKey),
+    FOREIGN KEY (CustomerKey) REFERENCES DIMENSIONS.DimCustomer(CustomerKey),
+    FOREIGN KEY (EmployeeKey) REFERENCES DIMENSIONS.DimEmployee(EmployeeKey)
+);
+GO
+
+
+
+2.1.	Se puede utilizar el siguiente comando luego de la creación de las tablas para observar que se crearon de forma adecuada: 
+
+SELECT TABLE_SCHEMA, TABLE_NAME
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_SCHEMA IN ('DIMENSIONS', 'FACTS');
+
+
+
+Crear la tabla DimTime
+
+USE DW_Northwind;
+GO
+
+IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'DIMENSIONS')
+    EXEC('CREATE SCHEMA DIMENSIONS');
+GO
+
+CREATE TABLE DIMENSIONS.DimTime (
+    TimeKey INT PRIMARY KEY, -- YYYYMMDD
+    FullDate DATE,
+    Day TINYINT,
+    Month TINYINT,
+    Year SMALLINT,
+    Week INT,
+    DayName NVARCHAR(10),
+    MonthName NVARCHAR(10),
+    Quarter TINYINT
+);
+GO
+
+DECLARE @StartDate DATE = '1996-01-01';
+DECLARE @EndDate DATE = '1998-12-31';
+
+WHILE @StartDate <= @EndDate
+BEGIN
+    INSERT INTO DIMENSIONS.DimTime (
+        TimeKey, FullDate, Day, Month, Year, Week, DayName, MonthName, Quarter
+    )
+    VALUES (
+        CONVERT(INT, FORMAT(@StartDate, 'yyyyMMdd')),
+        @StartDate,
+        DATEPART(DAY, @StartDate),
+        DATEPART(MONTH, @StartDate),
+        DATEPART(YEAR, @StartDate),
+        DATEPART(WEEK, @StartDate),
+        DATENAME(WEEKDAY, @StartDate),
+        DATENAME(MONTH, @StartDate),
+        DATEPART(QUARTER, @StartDate)
+    );
+
+    SET @StartDate = DATEADD(DAY, 1, @StartDate);
+END;
+GO
+
+
+Actualizar la table factSales para agregar la nueva dimension y jerarquias
+
+ALTER TABLE FACTS.FactSales
+ADD TimeKey INT;
+GO
+
+UPDATE FACTS.FactSales
+SET TimeKey = CONVERT(INT, FORMAT(OrderDate, 'yyyyMMdd'));
+GO
+
+ALTER TABLE FACTS.FactSales
+ADD CONSTRAINT FK_FactSales_TimeKey
+FOREIGN KEY (TimeKey) REFERENCES DIMENSIONS.DimTime(TimeKey);
+GO
+
+
+
+3.	Script de deshabilitación de restricciones, carga de datos en cada tabla dimensión y en la tabla de hechos y habilitación de restricciones. 
+
+-- Deshabilitar restricciones (por si hay FOREIGN KEYS que interfieran)
+ALTER TABLE FACTS.FactSales NOCHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimCustomer NOCHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimProduct NOCHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimEmployee NOCHECK CONSTRAINT ALL;
+
+
+-- Insertar datos en DimCustomer desde Northwind.dbo.Customers
+INSERT INTO DIMENSIONS.DimCustomer (CustomerID, CompanyName, ContactName, Country)
+SELECT CustomerID, CompanyName, ContactName, Country
+FROM Northwnd.dbo.Customers;
+
+-- Insertar datos en DimProduct desde Northwind.dbo.Products y Categories
+INSERT INTO DIMENSIONS.DimProduct (ProductID, ProductName, Category, UnitPrice)
+SELECT 
+    p.ProductID, 
+    p.ProductName, 
+    c.CategoryName,
+    p.UnitPrice
+FROM Northwnd.dbo.Products p
+JOIN Northwnd.dbo.Categories c ON p.CategoryID = c.CategoryID;
+
+-- Insertar datos en DimEmployee desde Northwind.dbo.Employees
+INSERT INTO DIMENSIONS.DimEmployee (EmployeeID, LastName, FirstName, Title, Country)
+SELECT EmployeeID, LastName, FirstName, Title, Country
+FROM Northwnd.dbo.Employees;
+
+
+-- Insertar datos en tabla de hechos
+INSERT INTO FACTS.FactSales (
+    OrderID, ProductKey, CustomerKey, EmployeeKey, OrderDate, Quantity, UnitPrice, Total
+)
+SELECT 
+    o.OrderID,
+    dp.ProductKey,
+    dc.CustomerKey,
+    de.EmployeeKey,
+    o.OrderDate,
+    od.Quantity,
+    od.UnitPrice,
+    (od.Quantity * od.UnitPrice) AS Total
+FROM Northwnd.dbo.Orders o
+JOIN Northwnd.dbo.[Order Details] od ON o.OrderID = od.OrderID
+-- Solución collation segura:
+JOIN DIMENSIONS.DimProduct dp ON dp.ProductID = od.ProductID
+JOIN DIMENSIONS.DimCustomer dc ON 
+    dc.CustomerID = o.CustomerID COLLATE SQL_Latin1_General_CP1_CI_AS
+JOIN DIMENSIONS.DimEmployee de ON 
+    de.EmployeeID = CAST(o.EmployeeID AS VARCHAR) COLLATE SQL_Latin1_General_CP1_CI_AS;
+
+-- Rehabilitar restricciones
+ALTER TABLE FACTS.FactSales CHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimCustomer CHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimProduct CHECK CONSTRAINT ALL;
+ALTER TABLE DIMENSIONS.DimEmployee CHECK CONSTRAINT ALL;
+
+
+3.1.	Ingresar el siguiente comando para verificar que se agregaron valores a las tablas, en el número “5” en este caso, se podría aumentar o disminuir para que muestre más o menos datos, dependiendo lo que uno requiera, es más que nada para verificar que los datos si se muestran 
+
+
+SELECT TOP 5 * FROM DIMENSIONS.DimCustomer;
+SELECT TOP 5 * FROM DIMENSIONS.DimProduct;
+SELECT TOP 5 * FROM DIMENSIONS.DimEmployee;
+SELECT TOP 5 * FROM FACTS.FactSales;
+
+
+4.	Script de manejo de restricciones en tablas de dimensiones, hechos y restricciones. 
+
+-- Clave única para CustomerID en DimCustomer
+ALTER TABLE DIMENSIONS.DimCustomer
+ADD CONSTRAINT UQ_CustomerID UNIQUE (CustomerID);
+
+-- Clave única para ProductID en DimProduct
+ALTER TABLE DIMENSIONS.DimProduct
+ADD CONSTRAINT UQ_ProductID UNIQUE (ProductID);
+
+-- Clave única para EmployeeID en DimEmployee
+ALTER TABLE DIMENSIONS.DimEmployee
+ADD CONSTRAINT UQ_EmployeeID UNIQUE (EmployeeID);
+
+
+-- Validar que precios y cantidades no sean negativos
+ALTER TABLE FACTS.FactSales
+ADD CONSTRAINT CK_Quantity_Positive CHECK (Quantity >= 0);
+
+ALTER TABLE FACTS.FactSales
+ADD CONSTRAINT CK_UnitPrice_Positive CHECK (UnitPrice >= 0);
+
+ALTER TABLE FACTS.FactSales
+ADD CONSTRAINT CK_Total_Positive CHECK (Total >= 0);
+
+
+-- Rehabilitar restricciones foráneas manualmente (por si alguna falla)
+ALTER TABLE FACTS.FactSales
+WITH CHECK CHECK CONSTRAINT ALL;
+
+
+En el siguiente comando simulamos la inserción de datos que incumplen las restricciones puestas, por lo que, al ejecutarlo, debería arrojar error 
+
+-- Intento con Quantity negativo (debería fallar)
+INSERT INTO FACTS.FactSales (OrderID, ProductKey, CustomerKey, EmployeeKey, OrderDate, Quantity, UnitPrice, Total)
+VALUES (99999, 1, 1, 1, GETDATE(), -5, 10, -50);
+
+-- Intento con UnitPrice negativo (debería fallar)
+INSERT INTO FACTS.FactSales (OrderID, ProductKey, CustomerKey, EmployeeKey, OrderDate, Quantity, UnitPrice, Total)
+VALUES (99998, 1, 1, 1, GETDATE(), 5, -10, -50);
+
+-- Intento con Total negativo (debería fallar)
+INSERT INTO FACTS.FactSales (OrderID, ProductKey, CustomerKey, EmployeeKey, OrderDate, Quantity, UnitPrice, Total)
+VALUES (99997, 1, 1, 1, GETDATE(), 5, 10, -50);
+
+
+5.	Script de creación de índices para tablas de dimensiones y de hechos. 
+
+-- Índices en DimCustomer
+CREATE NONCLUSTERED INDEX IX_DimCustomer_CustomerID
+ON DIMENSIONS.DimCustomer (CustomerID);
+
+-- Índices en DimProduct
+CREATE NONCLUSTERED INDEX IX_DimProduct_ProductID
+ON DIMENSIONS.DimProduct (ProductID);
+
+-- Índices en DimEmployee
+CREATE NONCLUSTERED INDEX IX_DimEmployee_EmployeeID
+ON DIMENSIONS.DimEmployee (EmployeeID);
+
+
+-- Índice por claves foráneas
+CREATE NONCLUSTERED INDEX IX_FactSales_ProductKey
+ON FACTS.FactSales (ProductKey);
+
+CREATE NONCLUSTERED INDEX IX_FactSales_CustomerKey
+ON FACTS.FactSales (CustomerKey);
+
+CREATE NONCLUSTERED INDEX IX_FactSales_EmployeeKey
+ON FACTS.FactSales (EmployeeKey);
+
+-- Índice en OrderDate para filtros por fechas
+CREATE NONCLUSTERED INDEX IX_FactSales_OrderDate
+ON FACTS.FactSales (OrderDate);

@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.36227.6
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{D2ABAB84-BF74-430A-B69E-9DC6D40DDA17}") = "Cubo_Northwind", "Cubo_Northwind\Cubo_Northwind.dwproj", "{399BBF44-A6C8-43FA-813A-B961C0A61173}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Development|Default = Development|Default
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{399BBF44-A6C8-43FA-813A-B961C0A61173}.Development|Default.ActiveCfg = Development
+		{399BBF44-A6C8-43FA-813A-B961C0A61173}.Development|Default.Build.0 = Development
+		{399BBF44-A6C8-43FA-813A-B961C0A61173}.Development|Default.Deploy.0 = Development
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {88D4BF1F-1219-45A7-879E-56DB14F9B220}
+	EndGlobalSection
+EndGlobal

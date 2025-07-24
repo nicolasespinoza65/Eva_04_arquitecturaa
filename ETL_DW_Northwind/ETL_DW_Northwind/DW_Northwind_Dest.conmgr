@@ -1,0 +1,10 @@
+﻿<?xml version="1.0"?>
+<DTS:ConnectionManager xmlns:DTS="www.microsoft.com/SqlServer/Dts"
+  DTS:ObjectName="LocalHost.DW_Northwind"
+  DTS:DTSID="{E3C7B916-1162-4260-AD5B-F6BEAC1FC6D0}"
+  DTS:CreationName="ADO">
+  <DTS:ObjectData>
+    <DTS:ConnectionManager
+      DTS:ConnectionString="Data Source=.;Initial Catalog=DW_Northwind;Provider=SQLNCLI11.1;Integrated Security=SSPI;Application Name=SSIS-ETL_DW_Northwind-{E3C7B916-1162-4260-AD5B-F6BEAC1FC6D0}LocalHost.DW_Northwind;Auto Translate=False;" />
+  </DTS:ObjectData>
+</DTS:ConnectionManager>
